@@ -6,7 +6,7 @@ class ReceiveMessageJob < ApplicationJob
     Timeout.timeout(wait) do
       loop do
         MessageReceiver::SocketObject.recvfrom_nonblock do |data, address_info|
-          Rails.logger.info "Received: #{data.chomp.unpack('H*')} from #{address_info[3]}"
+          HandleMessageService.call(data, address_info)
         end
         sleep 0.1
       end
