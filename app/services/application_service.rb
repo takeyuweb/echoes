@@ -1,13 +1,9 @@
 class ApplicationService
   def self.call(*args)
-    new(*args).call
+    new.call(*args)
   end
 
-  def initialize(*_)
-    raise NotImplementedError
-  end
-
-  def call
+  def call(*_)
     raise NotImplementedError
   end
 end

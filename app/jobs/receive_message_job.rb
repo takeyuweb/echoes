@@ -8,7 +8,6 @@ class ReceiveMessageJob < ApplicationJob
         MessageReceiver::SocketObject.recvfrom_nonblock do |data, address_info|
           HandleMessageService.call(data, address_info)
         end
-        sleep 0.1
       end
     end
   rescue Timeout::Error
