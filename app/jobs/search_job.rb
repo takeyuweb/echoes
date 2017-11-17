@@ -3,7 +3,7 @@ require 'socket'
 class SearchJob < ApplicationJob
   queue_as :default
 
-  def perform(addr: '192.168.108.101')
+  def perform(addr='192.168.108.101')
     ReceiveMessageJob.perform_later(3)
 
     # すべてノードに対して，すべてのEOJをGetする

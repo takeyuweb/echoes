@@ -1,3 +1,5 @@
 %h1 Search
 = form_with url: search_url do |form|
+  = form.label 'NIC', for: :interface
+  = form.select :interface, options_for_select(@interfaces, selected: params[:interface])
   = form.button 'Scan'
