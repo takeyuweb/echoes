@@ -10,6 +10,19 @@
   %b Eoj:
   = @device.eoj
 
+%h2 Operation
+
+- @device.spec.each do |epc, epc_info|
+  %h3
+    = "#{epc_info['epcName']} (#{epc})"
+  - epc_info['edt'].each do |element|
+    - if element['content']['keyValues']
+      = element['elementName']
+      = form_with model: @device do |f|
+        = f.hidden_field :epc, value: epc
+        = f.select :edt, options_for_select(element['content']['keyValues'].map{|k, v| [v, k]})
+        = f.submit 'SetC'
+
 = link_to 'Edit', edit_device_path(@device)
 \|
 = link_to 'Back', devices_path

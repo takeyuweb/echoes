@@ -11,11 +11,12 @@ class HandleMessageService < ApplicationService
 
       attr_reader :code, :number, :ipaddr, :properties
 
-      def initialize(code, number, epcs: {}, ipaddr: nil)
+      def initialize(code, number, epcs: {}, ipaddr: nil, version: nil)
         @code = normalize_code(code)
         @number = normalize_number(number)
         @epcs = normalize_epcs(epcs)
         @ipaddr = normalize_ipaddr(ipaddr)
+        @version = version
 
         decode_properties
       end
@@ -38,6 +39,10 @@ class HandleMessageService < ApplicationService
         else
           nil
         end
+      end
+
+      def spec
+        @spec ||= el_object['epcs']
       end
 
       private
@@ -119,13 +124,18 @@ class HandleMessageService < ApplicationService
               content = edt.slice!(0, element['elementSize'] * 2)
               if element['content'].has_key?('numericValue')
                 if element['content'].has_key?('keyValues')
-                  content_code = normalize_code(content).inspect
+                  content_code = normalize_code(content)
                   if element['content']['keyValues'].has_key?(content_code)
                     element_data['keyValue'] = element['content']['keyValues'][content_code]
                   end
                 end
                 # TODO: Unsigned / Signed のサポート
                 element_data['numericValue'] = content.to_i(16)
+              elsif element['content'].has_key?('keyValues')
+                content_code = normalize_code(content)
+                if element['content']['keyValues'].has_key?(content_code)
+                  element_data['keyValue'] = element['content']['keyValues'][content_code]
+                end
               elsif element['content'].has_key?('level')
                 raise element['content'].inspect
               elsif element['content'].has_key?('bitmap')
@@ -215,11 +225,9 @@ class HandleMessageService < ApplicationService
       private
 
       def decode_version
-        if @epcs['0x82']
-          @version = @epcs['0x82'].slice(4, 2).to_i(16).chr
-        else
-          @version = nil
-        end
+        @version = if @epcs['0x82']
+                     @epcs['0x82'].slice(4, 2).to_i(16).chr
+                   end
       end
 
       def decode_properties
@@ -227,7 +235,7 @@ class HandleMessageService < ApplicationService
         # まずバージョンを確認
         decode_version
         # これで機器オブジェクト詳細規定を特定できるので解析に進める
-        super if version
+        super
       end
 
       def el_object
@@ -300,6 +308,7 @@ class HandleMessageService < ApplicationService
   end
 
   def call(bytes, address_info)
+    # TODO: Get_Res Set_Res の区別。Set_Res の場合成功したらEDTが空の結果が帰ってくる
     Rails.logger.info "Received: #{bytes.chomp.unpack('H*')} from #{address_info[3]}"
 
     frame = ECHONETLite::Frame.new(bytes)
