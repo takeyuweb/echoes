@@ -1,44 +1,148 @@
-class HandleMessageService < ApplicationService
-  module EchonetLite
-    class DeviceClass
-      attr_reader :class_code
+require 'ipaddr'
 
-      def initialize(class_code)
-        @class_code = class_code
-        @el_object = el_objects[class_code]
+class HandleMessageService < ApplicationService
+  module ECHONETLite
+    class Instance
+      class << self
+        def el_objects
+          raise NotImplementedError
+        end
+      end
+
+      attr_reader :code, :number, :ipaddr, :properties
+
+      def initialize(code, number, epcs: {}, ipaddr:)
+        @code = normalize_code(code)
+        @number = normalize_number(number)
+        @epcs = epcs
+        @ipaddr = normalize_ipaddr(ipaddr)
+
+        decode_properties
+      end
+
+      def known?
+        !el_object.nil?
+      end
+
+      def unknown?
+        !known?
       end
 
       def name
-        @el_object['objectName']
+        if known?
+          "#{el_object['objectName']} #{number}"
+        else
+          nil
+        end
       end
 
       private
 
-      def el_objects
-        device_objects = JSON.parse(File.read(Rails.root.join('config', 'appendix', 'deviceObject.json')))['elObjects']
-        node_profiles = JSON.parse(File.read(Rails.root.join('config', 'appendix', "nodeProfile.json")))['elObjects']
-        device_objects.merge(node_profiles)
+      def normalize_code(code)
+        "0x#{code.upcase}".freeze
+      end
+
+      def normalize_number(number)
+        case number
+          when String
+            number.to_i(16)
+          else
+            number.to_i
+        end
+      end
+
+      def normalize_ipaddr(ipaddr)
+        case ipaddr
+          when IPAddr
+            ipaddr
+          else
+            IPAddr.new(ipaddr)
+        end
+      end
+
+      def el_object
+        @el_object ||= self.class.el_objects[code]
+      end
+
+      def decode_properties
+        @properties =
+          @epcs.keys.map do |epc|
+            edt = @epcs[epc]
+            epc = normalize_code(epc)
+            decode_property(edt, el_object['epcs'][epc])
+          end
+      end
+
+      def decode_property(edt, spec)
+        edt = edt.dup
+        spec['epcName']
+        spec['epcSize']
+        spec['notApplicable'] # 適応外
+        spec['accessModeSet'] # Set時必須 required / optional / notApplicable
+        spec['accessModeGet'] # Get時必須 required / optional / notApplicable
+        spec['accessModeAnno'] # 状変アナウンス時必須 required / optional / notApplicable
+        spec['edt'].each do |element|
+          element['elementName']
+          element['elementSize']
+          element['repeatCount']
+          element['content']
+          element['content']['keyValues'] # 個々の数値にそれぞれ意味を持たせた場合。例: 0x30=ON
+          element['content']['numericValue'] # 数値の場合。例: 25%
+          element['content']['level'] # 制御のレベルをある範囲の値に対応させた場合。例: 0x31->レベル1, ... 0x38->レベル8
+          element['content']['bitmap'] # bit毎に動作設定を定義した場合。
+          element['content']['rawData'] # 数値としてではなく、値そのものを利用する場合。例: 製造番号
+          element['content']['customType'] # 複数のnumericValueの組み合わせで特定の意味を持つ場合。例: 年月日, 日時
+          element['content']['others'] # その他の場合。例: 特定のEPC固有のdecode方法を持つ場合。
+          element['repeatCount'].times do
+            content = edt.slice!(0, element['elementSize'])
+            if element['content'].has_key?('numericValue')
+              decimal
+              content_code = normalize_code(content).inspect
+              raise element['content'].inspect
+              if element['content'].has_key?('keyValues')
+                content_code = normalize_code(content).inspect
+                if element['content']['keyValues'].has_key?(content_code)
+                  element['content']['keyValues'][content_code]
+                else
+
+                end
+              else
+
+              end
+              raise element['content'].inspect
+            elsif element['content'].has_key?('level')
+              raise element['content'].inspect
+            elsif element['content'].has_key?('bitmap')
+              raise element['content'].inspect
+            elsif element['content'].has_key?('rawData')
+              raise element['content'].inspect
+            elsif element['content'].has_key?('customType')
+              raise element['content'].inspect
+            elsif element['content'].has_key?('others')
+              Rails.logger.debug "#{spec['epcName']}(#{element['elementName']}): #{content}"
+            end
+          end
+        end
       end
     end
 
-    class DeviceObject
-      attr_reader :device_class, :instance_code
-
-      def initialize(class_code, instance_code)
-        @device_class = DeviceClass.new(class_code)
-        @instance_code = instance_code
-      end
-
-      def name
-        "#{device_class.name} #{instance_number}"
-      end
-
-      def instance_number
-        instance_code.to_i(16)
+    class NodeProfile < Instance
+      class << self
+        def el_objects
+          JSON.parse(File.read(Rails.root.join('config', 'appendix', "nodeProfile.json")))['elObjects']
+        end
       end
     end
 
-    class Data
+    class DeviceObject < Instance
+      class << self
+        def el_objects
+          JSON.parse(File.read(Rails.root.join('config', 'appendix', "deviceObject.json")))['elObjects']
+        end
+      end
+    end
+
+    class Frame
       def initialize(bytes)
         @data = {}
         parse(bytes)
@@ -51,12 +155,6 @@ class HandleMessageService < ApplicationService
         else
           raise ArgumentError
         end
-      end
-
-      def device_object
-        device_class_code = "0x#{self[:SEOJ][0..3].upcase}"
-        device_instance_code = "0x#{self[:SEOJ][4..5].upcase}"
-        DeviceObject.new(device_class_code, device_instance_code)
       end
 
       private
@@ -87,8 +185,22 @@ class HandleMessageService < ApplicationService
       end
 
       def parse_detail(opc, hexstring)
-        # TODO
-        {}
+        hexstring = hexstring.dup
+        opc.to_i(16).times.inject({}) do |memo, _|
+          epc = hexstring.slice!(0, 2)
+          pdc = hexstring.slice!(0, 2)
+          edt = hexstring.slice!(0, pdc.to_i(16) * 2)
+          memo.tap { |m| m[epc] = edt }
+        end
+      end
+    end
+
+    def self.get_instance(echonetobject, epcs: {}, ipaddr:)
+      device_class_code, instance_code = echonetobject.scan(/\A(.{4})(.{2})\z/)[0]
+      if device_class_code =~ /\A0ef0\z/i
+        NodeProfile.new(device_class_code, instance_code, epcs: epcs, ipaddr: ipaddr)
+      else
+        DeviceObject.new(device_class_code, instance_code, epcs: epcs, ipaddr: ipaddr)
       end
     end
   end
@@ -96,8 +208,10 @@ class HandleMessageService < ApplicationService
   def call(bytes, address_info)
     Rails.logger.info "Received: #{bytes.chomp.unpack('H*')} from #{address_info[3]}"
 
-    echonetlite_data = EchonetLite::Data.new(bytes)
-    Rails.logger.info "Parsed: #{echonetlite_data.inspect}"
-    Rails.logger.info "Parsed: #{echonetlite_data.device_object.name}"
+    frame = ECHONETLite::Frame.new(bytes)
+    Rails.logger.info "Parsed: #{frame.inspect}"
+    echonetinstance = ECHONETLite.get_instance(frame[:SEOJ], epcs: frame[:DETAILS], ipaddr: address_info[3])
+    Rails.logger.info "#{echonetinstance.name} from #{echonetinstance.ipaddr}"
+    Rails.logger.info echonetinstance.properties.inspect
   end
 end
