@@ -1,5 +1,32 @@
-%h1 Search
+%h1 ECHOES
+
+My HEMS Server & API Gateway
+
+%h2 Search devices
+
 = form_with url: search_url do |form|
   = form.label 'NIC', for: :interface
   = form.select :interface, options_for_select(@interfaces, selected: params[:interface])
   = form.button 'Scan'
+
+%h2 Listing devices
+
+%table
+  %thead
+    %tr
+      %th Name
+      %th Ipaddr
+      %th Eoj
+      %th
+      %th
+      %th
+
+  %tbody
+    - @devices.each do |device|
+      %tr
+        %td= device.name
+        %td= device.ipaddr
+        %td= device.eoj
+        %td= link_to 'Show', device
+        %td= link_to 'Edit', edit_device_path(device)
+        %td= link_to 'Destroy', device, method: :delete, data: { confirm: 'Are you sure?' }

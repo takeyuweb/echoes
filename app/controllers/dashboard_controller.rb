@@ -1,12 +1,14 @@
 class DashboardController < ApplicationController
   def index
     prepare_interfaces
+    @devices = Device.all
   end
 
   def search
     SearchJob.perform_later(params[:interface].presence || '0.0.0.0')
 
     prepare_interfaces
+    @devices = Device.all
     render action: :index
   end
 
