@@ -2,7 +2,7 @@ class DashboardController < ApplicationController
   def index
     @interfaces =
       Socket.getifaddrs.select{|ifaddr| ifaddr.addr.ipv4? || ifaddr.addr.ipv6?}.map { |ifaddr| ifaddr.addr.ip_address }
-    @devices = Device.all
+    @nodes = Node.includes(:devices).all
   end
 
   def search

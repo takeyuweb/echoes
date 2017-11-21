@@ -1,3 +1,5 @@
+%p#notice= notice
+
 %h1 ECHOES
 
 My HEMS Server & API Gateway
@@ -11,22 +13,27 @@ My HEMS Server & API Gateway
 
 %h2 Listing devices
 
-%table
-  %thead
-    %tr
-      %th Name
-      %th Ipaddr
-      %th Eoj
-      %th
-      %th
-      %th
+- @nodes.each do |node|
 
-  %tbody
-    - @devices.each do |device|
+  %h3
+    = "#{node.name} (#{node.ipaddr})"
+
+  %table
+    %thead
       %tr
-        %td= device.name
-        %td= device.ipaddr
-        %td= device.eoj
-        %td= link_to 'Show', device
-        %td= link_to 'Edit', edit_device_path(device)
-        %td= link_to 'Destroy', device, method: :delete, data: { confirm: 'Are you sure?' }
+        %th Name
+        %th Ipaddr
+        %th Eoj
+        %th
+        %th
+        %th
+
+    %tbody
+      - node.devices.each do |device|
+        %tr
+          %td= device.name
+          %td= device.ipaddr
+          %td= device.eoj
+          %td= link_to 'Show', device
+          %td= link_to 'Edit', edit_device_path(device)
+          %td= link_to 'Destroy', device, method: :delete, data: { confirm: 'Are you sure?' }

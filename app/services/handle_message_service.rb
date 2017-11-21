@@ -308,11 +308,10 @@ class HandleMessageService < ApplicationService
     Rails.logger.info "#{echonetinstance.name} from #{echonetinstance.ipaddr}"
     Rails.logger.info echonetinstance.inspect
 
-    device = Device.where(eoj: echonetinstance.eoj.map { |v| format('%02x', v) }.join).first_or_initialize(name: echonetinstance.name)
-    device.ipaddr = echonetinstance.ipaddr
-    device.save
-
     if echonetinstance.respond_to?(:instances)
+      # TODO: IPアドレス以外の識別方法
+      Node.where(ipaddr: echonetinstance.ipaddr).first_or_create!(name: echonetinstance.name)
+
       ReceiveMessageJob.perform_later(3)
 
       echonetinstance.instances.each do |instance|
@@ -336,6 +335,11 @@ class HandleMessageService < ApplicationService
           udp.connect(echonetinstance.ipaddr.to_s, 3610)
           udp.send(msg, 0)
         end
+      end
+    else
+      node = Node.find_by(ipaddr: echonetinstance.ipaddr)
+      if node
+        node.devices.where(eoj: echonetinstance.eoj.map { |v| format('%02x', v) }.join).first_or_create!(name: echonetinstance.name)
       end
     end
   end
