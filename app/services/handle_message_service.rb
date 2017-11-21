@@ -11,7 +11,7 @@ class HandleMessageService < ApplicationService
 
       attr_reader :code, :number, :ipaddr, :properties
 
-      def initialize(code, number, epcs: {}, ipaddr:)
+      def initialize(code, number, epcs: {}, ipaddr: nil)
         @code = normalize_code(code)
         @number = normalize_number(number)
         @epcs = epcs
@@ -55,8 +55,10 @@ class HandleMessageService < ApplicationService
         case ipaddr
           when IPAddr
             ipaddr
-          else
+          when String
             IPAddr.new(ipaddr)
+          else
+            nil
         end
       end
 
@@ -74,6 +76,7 @@ class HandleMessageService < ApplicationService
       end
 
       def decode_property(edt, spec)
+        data = {}
         edt = edt.dup
         spec['epcName']
         spec['epcSize']
@@ -93,36 +96,35 @@ class HandleMessageService < ApplicationService
           element['content']['rawData'] # 数値としてではなく、値そのものを利用する場合。例: 製造番号
           element['content']['customType'] # 複数のnumericValueの組み合わせで特定の意味を持つ場合。例: 年月日, 日時
           element['content']['others'] # その他の場合。例: 特定のEPC固有のdecode方法を持つ場合。
-          element['repeatCount'].times do
-            content = edt.slice!(0, element['elementSize'])
-            if element['content'].has_key?('numericValue')
-              decimal
-              content_code = normalize_code(content).inspect
-              raise element['content'].inspect
-              if element['content'].has_key?('keyValues')
-                content_code = normalize_code(content).inspect
-                if element['content']['keyValues'].has_key?(content_code)
-                  element['content']['keyValues'][content_code]
-                else
-
+          data[element['elementName']] =
+            Array.new(element['repeatCount']) do
+              element_data = {}
+              content = edt.slice!(0, element['elementSize'] * 2)
+              if element['content'].has_key?('numericValue')
+                if element['content'].has_key?('keyValues')
+                  content_code = normalize_code(content).inspect
+                  if element['content']['keyValues'].has_key?(content_code)
+                    element_data['keyValue'] = element['content']['keyValues'][content_code]
+                  end
                 end
-              else
-
+                # TODO: Unsigned / Signed のサポート
+                element_data['numericValue'] = content.to_i(16)
+              elsif element['content'].has_key?('level')
+                raise element['content'].inspect
+              elsif element['content'].has_key?('bitmap')
+                raise element['content'].inspect
+              elsif element['content'].has_key?('rawData')
+                raise element['content'].inspect
+              elsif element['content'].has_key?('customType')
+                raise element['content'].inspect
+              elsif element['content'].has_key?('others')
+                element_data['others'] = element['content']['others']
               end
-              raise element['content'].inspect
-            elsif element['content'].has_key?('level')
-              raise element['content'].inspect
-            elsif element['content'].has_key?('bitmap')
-              raise element['content'].inspect
-            elsif element['content'].has_key?('rawData')
-              raise element['content'].inspect
-            elsif element['content'].has_key?('customType')
-              raise element['content'].inspect
-            elsif element['content'].has_key?('others')
-              Rails.logger.debug "#{spec['epcName']}(#{element['elementName']}): #{content}"
+              element_data['raw'] = content
+              element_data
             end
-          end
         end
+        data
       end
     end
 
@@ -131,6 +133,37 @@ class HandleMessageService < ApplicationService
         def el_objects
           JSON.parse(File.read(Rails.root.join('config', 'appendix', "nodeProfile.json")))['elObjects']
         end
+      end
+
+      attr_reader :instances
+
+      def initialize(*args)
+        @instances = []
+        super(*args)
+      end
+
+      private
+
+      def decode_property(edt, spec)
+        super.tap do |property|
+          if spec['epcName'] == '自ノードインスタンスリストS'
+            if property['インスタンス総数'][0].has_key?('keyValue') &&
+              property['インスタンス総数'][0]['keyValue'] == 'Overflow'
+              # TODO: インスタンス総数が 255以上の場合
+              raise property.inspect
+            else
+              raw = property['インスタンスリスト'][0]['raw']
+              Array.new(property['インスタンス総数'][0]['numericValue']) do
+                object_code = raw.slice!(0, 6) # EOJ 3bytes
+                add_instace(object_code)
+              end
+            end
+          end
+        end
+      end
+
+      def add_instace(echonetobject)
+        @instances.push(ECHONETLite.get_instance(echonetobject))
       end
     end
 
@@ -195,7 +228,7 @@ class HandleMessageService < ApplicationService
       end
     end
 
-    def self.get_instance(echonetobject, epcs: {}, ipaddr:)
+    def self.get_instance(echonetobject, epcs: {}, ipaddr: nil)
       device_class_code, instance_code = echonetobject.scan(/\A(.{4})(.{2})\z/)[0]
       if device_class_code =~ /\A0ef0\z/i
         NodeProfile.new(device_class_code, instance_code, epcs: epcs, ipaddr: ipaddr)
@@ -212,6 +245,9 @@ class HandleMessageService < ApplicationService
     Rails.logger.info "Parsed: #{frame.inspect}"
     echonetinstance = ECHONETLite.get_instance(frame[:SEOJ], epcs: frame[:DETAILS], ipaddr: address_info[3])
     Rails.logger.info "#{echonetinstance.name} from #{echonetinstance.ipaddr}"
-    Rails.logger.info echonetinstance.properties.inspect
+    Rails.logger.info echonetinstance.inspect
+    echonetinstance.instances.each do |instance|
+      Rails.logger.info instance.inspect
+    end
   end
 end
