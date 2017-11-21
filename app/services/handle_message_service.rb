@@ -14,10 +14,14 @@ class HandleMessageService < ApplicationService
       def initialize(code, number, epcs: {}, ipaddr: nil)
         @code = normalize_code(code)
         @number = normalize_number(number)
-        @epcs = epcs
+        @epcs = normalize_epcs(epcs)
         @ipaddr = normalize_ipaddr(ipaddr)
 
         decode_properties
+      end
+
+      def eoj
+        code.scan(/0x(\w{2})(\w{2})/)[0].map { |v| v.to_i(16) } + [number]
       end
 
       def known?
@@ -62,16 +66,29 @@ class HandleMessageService < ApplicationService
         end
       end
 
+      def normalize_epcs(epcs)
+        epcs.inject({}) do |memo, pair|
+          epc, edt = pair
+          memo[normalize_code(epc)] = edt
+          memo
+        end
+      end
+
       def el_object
-        @el_object ||= self.class.el_objects[code]
+        self.class.el_objects[code]
       end
 
       def decode_properties
         @properties =
-          @epcs.keys.map do |epc|
-            edt = @epcs[epc]
-            epc = normalize_code(epc)
-            decode_property(edt, el_object['epcs'][epc])
+          @epcs.inject({}) do |memo, pair|
+            epc, edt = pair
+            if el_object['epcs'][epc]
+              memo[el_object['epcs'][epc]['epcName']] = decode_property(edt, el_object['epcs'][epc])
+            else
+              Rails.logger.debug el_object.inspect
+              Rails.logger.debug "Unknown EPC: #{epc} (#{name})"
+            end
+            memo
           end
       end
 
@@ -144,19 +161,28 @@ class HandleMessageService < ApplicationService
 
       private
 
-      def decode_property(edt, spec)
-        super.tap do |property|
-          if spec['epcName'] == '自ノードインスタンスリストS'
-            if property['インスタンス総数'][0].has_key?('keyValue') &&
-              property['インスタンス総数'][0]['keyValue'] == 'Overflow'
-              # TODO: インスタンス総数が 255以上の場合
-              raise property.inspect
-            else
-              raw = property['インスタンスリスト'][0]['raw']
-              Array.new(property['インスタンス総数'][0]['numericValue']) do
-                object_code = raw.slice!(0, 6) # EOJ 3bytes
-                add_instace(object_code)
-              end
+      def decode_properties
+        super
+
+        if property = properties['Version情報']
+          # 対応するAPPENDIX の Release 順を1バイトのASCIIコードで示す
+          # 1バイト目、2バイト目は将来拡張用として 0x00固定
+          # 3バイト目がRelease順を示す
+          #   Release B 0x00 0x00 0x42 0x00
+          raise property['Version情報'][0]['raw'].inspect
+          raise property['Version情報'][0]['raw'].slice(4, 2).to_i(16).chr
+        end
+
+        if property = properties['自ノードインスタンスリストS']
+          if property['インスタンス総数'][0].has_key?('keyValue') &&
+            property['インスタンス総数'][0]['keyValue'] == 'Overflow'
+            # TODO: インスタンス総数が 255以上の場合
+            raise property.inspect
+          else
+            raw = property['インスタンスリスト'][0]['raw']
+            Array.new(property['インスタンス総数'][0]['numericValue']) do
+              object_code = raw.slice!(0, 6) # EOJ 3bytes
+              add_instace(object_code)
             end
           end
         end
@@ -169,10 +195,45 @@ class HandleMessageService < ApplicationService
 
     class DeviceObject < Instance
       class << self
-        def el_objects
-          JSON.parse(File.read(Rails.root.join('config', 'appendix', "deviceObject.json")))['elObjects']
+        APPENDIX_RELEASE = %w(G H I).freeze
+        def el_objects(version)
+          # FIXME: 見つからないときはとりあえず一番新しいのを
+          version = APPENDIX_RELEASE.include?(version) ? version : APPENDIX_RELEASE.last
+
+          el_superclass_object = JSON.parse(File.read(Rails.root.join('config', 'appendix', version, 'superClass.json')))['elObjects']['0x0000']
+          JSON.parse(File.read(Rails.root.join('config', 'appendix', version, 'deviceObject.json')))['elObjects'].inject({}) do |memo, pair|
+            code, el_object = pair
+            memo[code] = el_object
+            memo[code]['epcs'] = el_superclass_object['epcs'].merge(memo[code]['epcs'])
+            memo
+          end
         end
       end
+
+      attr_reader :version
+
+      private
+
+      def decode_version
+        if @epcs['0x82']
+          @version = @epcs['0x82'].slice(4, 2).to_i(16).chr
+        else
+          @version = nil
+        end
+      end
+
+      def decode_properties
+        # デバイスプロファイルはAPPENDIXバージョンを特定できないとプロパティ解析できない
+        # まずバージョンを確認
+        decode_version
+        # これで機器オブジェクト詳細規定を特定できるので解析に進める
+        super if version
+      end
+
+      def el_object
+        self.class.el_objects(version)[code]
+      end
+
     end
 
     class Frame
@@ -230,7 +291,7 @@ class HandleMessageService < ApplicationService
 
     def self.get_instance(echonetobject, epcs: {}, ipaddr: nil)
       device_class_code, instance_code = echonetobject.scan(/\A(.{4})(.{2})\z/)[0]
-      if device_class_code =~ /\A0ef0\z/i
+      if device_class_code.match?(/\A0ef0\z/i)
         NodeProfile.new(device_class_code, instance_code, epcs: epcs, ipaddr: ipaddr)
       else
         DeviceObject.new(device_class_code, instance_code, epcs: epcs, ipaddr: ipaddr)
@@ -246,8 +307,32 @@ class HandleMessageService < ApplicationService
     echonetinstance = ECHONETLite.get_instance(frame[:SEOJ], epcs: frame[:DETAILS], ipaddr: address_info[3])
     Rails.logger.info "#{echonetinstance.name} from #{echonetinstance.ipaddr}"
     Rails.logger.info echonetinstance.inspect
-    echonetinstance.instances.each do |instance|
-      Rails.logger.info instance.inspect
+
+    if echonetinstance.respond_to?(:instances)
+      ReceiveMessageJob.perform_later(3)
+
+      echonetinstance.instances.each do |instance|
+        Rails.logger.info instance.inspect
+
+        # すべてノードに対して，ノードプロファイルを要求する
+        bytes = [
+          0x10, # EHD1 固定
+          0x81, # EHD2 固定
+          0x00, 0x00, # TID
+          0x05, 0xFF, 0x01, # SEOJ 送信元ECHONET Liteオブジェクト指定 最初の2バイトが種類、残り1バイトがインスタンスID。この場合は種類がコントローラー、インスタンスIDが1
+          instance.eoj, # DEOJ 送信先ECHNET Liteオブジェクト指定 0EF001 『ノードプロファイル』を指定
+          0x62, # ESV Setl=0x60 SetC=0x61 Get=0x62
+          0x01, # OPC 処理プロパティ数
+          0x82, # EPC1 Version情報=0x82
+          0x00, # EDT1
+        ]
+        msg = bytes.flatten.pack('C*')
+
+        UDPSocket.open do |udp|
+          udp.connect(echonetinstance.ipaddr.to_s, 3610)
+          udp.send(msg, 0)
+        end
+      end
     end
   end
 end

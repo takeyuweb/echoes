@@ -15,8 +15,8 @@ class SearchJob < ApplicationJob
       0x0E, 0xF0, 0x01, # DEOJ 送信先ECHNET Liteオブジェクト指定 0EF001 『ノードプロファイル』を指定
       0x62, # ESV Setl=0x60 SetC=0x61 Get=0x62
       0x01, # OPC 処理プロパティ数
-      0xD6, # EPC1 自ノードインスタンスリスト=D6
-      0x00 # EDT1
+      0xD6, # EPC1 自ノードインスタンスリスト=0xD6
+      0x00, # EDT1
     ].pack('C*')
 
     UDPSocket.open do |udp|
@@ -24,6 +24,7 @@ class SearchJob < ApplicationJob
       mif = IPAddr.new(addr).hton
       udp.setsockopt(Socket::IPPROTO_IP, Socket::IP_MULTICAST_IF, mif)
       udp.send(msg, 0, socketaddr)
+      udp.close
     end
   end
 end
