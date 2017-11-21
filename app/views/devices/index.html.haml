@@ -1,0 +1,23 @@
+%h1 Listing devices
+
+%table
+  %thead
+    %tr
+      %th Name
+      %th Ipaddr
+      %th Eoj
+      %th
+      %th
+      %th
+
+  %tbody
+    - @devices.each do |device|
+      %tr
+        %td= device.name
+        %td= device.ipaddr
+        %td= device.eoj
+        %td= link_to 'Show', device
+        %td= link_to 'Edit', edit_device_path(device)
+        %td= link_to 'Destroy', device, method: :delete, data: { confirm: 'Are you sure?' }
+
+%br

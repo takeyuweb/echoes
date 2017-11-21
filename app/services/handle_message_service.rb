@@ -308,6 +308,10 @@ class HandleMessageService < ApplicationService
     Rails.logger.info "#{echonetinstance.name} from #{echonetinstance.ipaddr}"
     Rails.logger.info echonetinstance.inspect
 
+    device = Device.where(eoj: echonetinstance.eoj.map { |v| format('%02x', v) }.join).first_or_initialize(name: echonetinstance.name)
+    device.ipaddr = echonetinstance.ipaddr
+    device.save
+
     if echonetinstance.respond_to?(:instances)
       ReceiveMessageJob.perform_later(3)
 
