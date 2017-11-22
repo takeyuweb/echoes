@@ -80,18 +80,27 @@ class HandleMessageService < ApplicationService
       end
 
       def el_object
-        self.class.el_objects[code]
+        el_object = self.class.el_objects[code]
+        if el_object
+          el_object
+        else
+          raise "Unknown code: #{code} (#{name})"
+          Rails.logger.debug "Unknown code: #{code} (#{name})"
+          nil
+        end
       end
 
       def decode_properties
         @properties =
           @epcs.inject({}) do |memo, pair|
             epc, edt = pair
-            if el_object['epcs'][epc]
-              memo[el_object['epcs'][epc]['epcName']] = decode_property(edt, el_object['epcs'][epc])
-            else
-              Rails.logger.debug el_object.inspect
-              Rails.logger.debug "Unknown EPC: #{epc} (#{name})"
+            if el_object
+              if el_object['epcs'][epc]
+                memo[el_object['epcs'][epc]['epcName']] = decode_property(edt, el_object['epcs'][epc])
+              else
+                Rails.logger.debug el_object.inspect
+                Rails.logger.debug "Unknown EPC: #{epc} (#{name})"
+              end
             end
             memo
           end
@@ -210,13 +219,20 @@ class HandleMessageService < ApplicationService
           # FIXME: 見つからないときはとりあえず一番新しいのを
           version = APPENDIX_RELEASE.include?(version) ? version : APPENDIX_RELEASE.last
 
-          el_superclass_object = JSON.parse(File.read(Rails.root.join('config', 'appendix', version, 'superClass.json')))['elObjects']['0x0000']
+          el_superclass_object = el_superclass_object(version)
           JSON.parse(File.read(Rails.root.join('config', 'appendix', version, 'deviceObject.json')))['elObjects'].inject({}) do |memo, pair|
             code, el_object = pair
             memo[code] = el_object
             memo[code]['epcs'] = el_superclass_object['epcs'].merge(memo[code]['epcs'])
             memo
           end
+        end
+
+        def el_superclass_object(version)
+          # FIXME: 見つからないときはとりあえず一番新しいのを
+          version = APPENDIX_RELEASE.include?(version) ? version : APPENDIX_RELEASE.last
+
+          JSON.parse(File.read(Rails.root.join('config', 'appendix', version, 'superClass.json')))['elObjects']['0x0000']
         end
       end
 
@@ -239,7 +255,12 @@ class HandleMessageService < ApplicationService
       end
 
       def el_object
-        self.class.el_objects(version)[code]
+        el_objects = self.class.el_objects(version)
+        if el_objects.has_key?(code)
+          el_objects[code]
+        else
+          self.class.el_superclass_object(version)
+        end
       end
 
     end
@@ -351,5 +372,8 @@ class HandleMessageService < ApplicationService
         node.devices.where(eoj: echonetinstance.eoj.map { |v| format('%02x', v) }.join).first_or_create!(name: echonetinstance.name)
       end
     end
+  rescue ActiveRecord::RecordInvalid => e
+    Rails.logger.error e
+    Rails.logger.error e.record.inspect
   end
 end
