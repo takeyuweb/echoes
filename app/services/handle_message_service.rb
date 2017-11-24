@@ -342,7 +342,7 @@ class HandleMessageService < ApplicationService
       # TODO: IPアドレス以外の識別方法
       Node.where(ipaddr: echonetinstance.ipaddr).first_or_create!(name: echonetinstance.name)
 
-      ReceiveMessageJob.perform_later(3)
+      ReceiveMessageJob.perform_later(3, 3)
 
       echonetinstance.instances.each do |instance|
         Rails.logger.info instance.inspect

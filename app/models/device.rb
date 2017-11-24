@@ -27,7 +27,7 @@ class Device < ApplicationRecord
   end
 
   def set_c(*props)
-    ReceiveMessageJob.perform_later(3)
+    ReceiveMessageJob.perform_later(3, 3)
 
     msg = [
       0x10, # EHD1 固定
@@ -48,7 +48,7 @@ class Device < ApplicationRecord
   end
 
   def get(*props)
-    ReceiveMessageJob.perform_later(3)
+    ReceiveMessageJob.perform_later(3, 3)
 
     msg = [
       0x10, # EHD1 固定
